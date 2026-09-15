@@ -11,3 +11,8 @@
 .kotlin
 *.keystore
 !debug.keystore
+*.apk
+*.keystore
+*keystore.env
+device_login.log
+publish.log
