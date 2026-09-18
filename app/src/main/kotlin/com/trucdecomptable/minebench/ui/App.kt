@@ -51,7 +51,10 @@ import com.trucdecomptable.minebench.core.PalierMeasure
 import com.trucdecomptable.minebench.core.PalierSpec
 import com.trucdecomptable.minebench.core.Sensors
 import com.trucdecomptable.minebench.core.ThermalStatus
+import com.trucdecomptable.minebench.net.BlockOpReturns
 import com.trucdecomptable.minebench.net.BtcNetwork
+import com.trucdecomptable.minebench.net.ExplorerClient
+import com.trucdecomptable.minebench.net.OpReturnHit
 import com.trucdecomptable.minebench.service.MiningConfig
 import com.trucdecomptable.minebench.service.MiningService
 import com.trucdecomptable.minebench.service.MiningState
@@ -81,6 +84,12 @@ fun MineBenchApp(sensors: Sensors) {
                 NavigationBarItem(
                     selected = tab == 2,
                     onClick = { tab = 2 },
+                    icon = { Text("E") },
+                    label = { Text("Explorateur") }
+                )
+                NavigationBarItem(
+                    selected = tab == 3,
+                    onClick = { tab = 3 },
                     icon = { Text("i") },
                     label = { Text("Infos") }
                 )
@@ -91,6 +100,7 @@ fun MineBenchApp(sensors: Sensors) {
             when (tab) {
                 0 -> BenchmarkScreen(sensors)
                 1 -> MiningScreen()
+                2 -> ExplorerScreen()
                 else -> InfoScreen()
             }
         }
@@ -416,6 +426,127 @@ fun MiningScreen() {
     }
 }
 
+// -------------------------------------------------------------- Explorateur
+
+@Composable
+fun ExplorerScreen() {
+    val scope = rememberCoroutineScope()
+    var query by remember { mutableStateOf("") }
+    var loading by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf("") }
+    var result by remember { mutableStateOf<BlockOpReturns?>(null) }
+
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Card {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Explorateur de bloc", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Recherche un bloc par hauteur (ex. 966856) ou par hash, puis lit les messages " +
+                        "OP_RETURN inscrits dans ses transactions. Lecture seule, via mempool.space.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                OutlinedTextField(
+                    query, { query = it },
+                    label = { Text("Hauteur ou hash de bloc") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                Button(
+                    enabled = !loading && query.isNotBlank(),
+                    onClick = {
+                        scope.launch {
+                            loading = true
+                            result = null
+                            status = "recherche…"
+                            runCatching {
+                                val client = ExplorerClient()
+                                val hash = client.resolveBlockHash(query)
+                                status = "lecture des transactions…"
+                                client.scanOpReturns(hash)
+                            }.onSuccess { res ->
+                                result = res
+                                status = "${res.hits.size} OP_RETURN sur ${res.scannedTx} " +
+                                    "transaction(s) examinée(s)"
+                            }.onFailure {
+                                status = "erreur : ${it.message ?: it.javaClass.simpleName}"
+                            }
+                            loading = false
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text(if (loading) "Recherche…" else "Chercher") }
+                if (loading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                if (status.isNotEmpty()) Text(status, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+
+        result?.let { res ->
+            Card {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text("Bloc ${res.block.height}", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        res.block.id,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    if (res.block.timestampSec > 0) {
+                        Text(
+                            "Horodatage : ${Format.time(res.block.timestampSec * 1000)}",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    Text(
+                        "Transactions : ${res.scannedTx} examinée(s) sur ${res.block.txCount}",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    if (res.block.txCount > res.scannedTx) {
+                        Text(
+                            "Analyse limitée aux ${res.scannedTx} premières transactions du bloc.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            }
+
+            if (res.hits.isEmpty()) {
+                Text(
+                    "Aucune sortie OP_RETURN dans les transactions examinées.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            } else {
+                Text("OP_RETURN trouvés (${res.hits.size})", style = MaterialTheme.typography.titleMedium)
+                res.hits.forEach { hit -> OpReturnCard(hit) }
+            }
+        }
+
+        Text(
+            "OP_RETURN sert à inscrire de petites données (messages, horodatages, marqueurs de " +
+                "protocole) dans une sortie de transaction non dépensable.",
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+}
+
+@Composable
+private fun OpReturnCard(hit: OpReturnHit) {
+    Card {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(
+                "tx ${hit.txid.take(16)}… · sortie #${hit.voutIndex} · ${hit.data.dataSize()} octets",
+                style = MaterialTheme.typography.titleSmall
+            )
+            Text("Texte : ${hit.data.text()}", style = MaterialTheme.typography.bodySmall)
+            Text(
+                "Hex : ${hit.data.hex()}",
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace
+            )
+        }
+    }
+}
+
 // --------------------------------------------------------------------- Infos
 
 @Composable
@@ -428,8 +559,9 @@ fun InfoScreen() {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("MineBench ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Deux usages : mesurer le débit SHA-256d réel de l'appareil (mode benchmark), " +
-                        "et miner pour de vrai sur un pool Stratum avec limitation de charge (mode minage)."
+                    "Trois usages : mesurer le débit SHA-256d réel de l'appareil (benchmark), " +
+                        "miner pour de vrai sur un pool Stratum avec limitation de charge (minage), " +
+                        "et lire les OP_RETURN d'un bloc de la blockchain (explorateur, lecture seule)."
                 )
                 Text(
                     "Aucune rentabilité : un téléphone produit de l'ordre de 0,000001 € par jour au cours " +
