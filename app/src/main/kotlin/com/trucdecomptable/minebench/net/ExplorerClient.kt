@@ -31,6 +31,16 @@ data class BlockOpReturns(
     val hits: List<OpReturnHit>
 )
 
+/** Un bloc récent, tel que listé par l'explorateur. */
+data class RecentBlock(
+    val id: String,
+    val height: Int,
+    val timestampSec: Long,
+    val txCount: Int,
+    val sizeBytes: Long,
+    val nonce: Long
+)
+
 /**
  * Client d'explorateur Bitcoin en lecture seule (API Esplora, telle qu'exposée
  * par mempool.space et blockstream.info). Recherche un bloc par hauteur ou par
@@ -54,6 +64,29 @@ class ExplorerClient(private val baseUrl: String = DEFAULT_BASE_URL) {
                 ?: throw IllegalArgumentException("Entrez une hauteur (nombre) ou un hash de 64 caractères")
             require(height >= 0) { "Hauteur invalide" }
             get("$baseUrl/block-height/$height").trim()
+        }
+    }
+
+    /**
+     * Les derniers blocs connus de la chaîne (les 10 plus récents, du plus récent
+     * au plus ancien). Endpoint Esplora `GET /blocks`.
+     */
+    suspend fun fetchLatestBlocks(): List<RecentBlock> = withContext(Dispatchers.IO) {
+        val arr = JSONArray(get("$baseUrl/blocks"))
+        buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                add(
+                    RecentBlock(
+                        id = o.optString("id", ""),
+                        height = o.optInt("height", -1),
+                        timestampSec = o.optLong("timestamp", 0L),
+                        txCount = o.optInt("tx_count", 0),
+                        sizeBytes = o.optLong("size", 0L),
+                        nonce = o.optLong("nonce", 0L)
+                    )
+                )
+            }
         }
     }
 

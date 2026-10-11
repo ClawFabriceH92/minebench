@@ -39,4 +39,27 @@ object Format {
     fun time(ms: Long): String = SimpleDateFormat("HH:mm:ss", Locale.FRANCE).format(Date(ms))
 
     fun share(v: Double): String = String.format(Locale.FRANCE, "%.3e", v)
+
+    /** Taille en octets -> o / Ko / Mo / Go (base 1000). */
+    fun size(bytes: Long): String {
+        val units = listOf("o", "Ko", "Mo", "Go")
+        var v = bytes.toDouble()
+        var i = 0
+        while (v >= 1000.0 && i < units.size - 1) {
+            v /= 1000.0
+            i++
+        }
+        return String.format(Locale.FRANCE, if (i == 0) "%.0f %s" else "%.2f %s", v, units[i])
+    }
+
+    /** Durée écoulée (en secondes) -> "il y a X s/min/h/j". */
+    fun ago(elapsedSec: Long): String {
+        val s = if (elapsedSec < 0) 0 else elapsedSec
+        return when {
+            s < 60 -> "il y a $s s"
+            s < 3600 -> "il y a ${s / 60} min"
+            s < 86400 -> "il y a ${s / 3600} h"
+            else -> "il y a ${s / 86400} j"
+        }
+    }
 }

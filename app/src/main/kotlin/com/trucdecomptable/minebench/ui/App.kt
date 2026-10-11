@@ -55,6 +55,7 @@ import com.trucdecomptable.minebench.net.BlockOpReturns
 import com.trucdecomptable.minebench.net.BtcNetwork
 import com.trucdecomptable.minebench.net.ExplorerClient
 import com.trucdecomptable.minebench.net.OpReturnHit
+import com.trucdecomptable.minebench.net.RecentBlock
 import com.trucdecomptable.minebench.service.MiningConfig
 import com.trucdecomptable.minebench.service.MiningService
 import com.trucdecomptable.minebench.service.MiningState
@@ -435,6 +436,44 @@ fun ExplorerScreen() {
     var loading by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("") }
     var result by remember { mutableStateOf<BlockOpReturns?>(null) }
+    var latest by remember { mutableStateOf<List<RecentBlock>?>(null) }
+    var loadingLatest by remember { mutableStateOf(false) }
+    var latestError by remember { mutableStateOf("") }
+
+    fun runSearch(q: String) {
+        if (q.isBlank() || loading) return
+        scope.launch {
+            loading = true
+            result = null
+            status = "recherche…"
+            runCatching {
+                val client = ExplorerClient()
+                val hash = client.resolveBlockHash(q)
+                status = "lecture des transactions…"
+                client.scanOpReturns(hash)
+            }.onSuccess { res ->
+                result = res
+                status = "${res.hits.size} OP_RETURN sur ${res.scannedTx} transaction(s) examinée(s)"
+            }.onFailure {
+                status = "erreur : ${it.message ?: it.javaClass.simpleName}"
+            }
+            loading = false
+        }
+    }
+
+    fun loadLatest() {
+        if (loadingLatest) return
+        scope.launch {
+            loadingLatest = true
+            latestError = ""
+            runCatching { ExplorerClient().fetchLatestBlocks() }
+                .onSuccess { latest = it }
+                .onFailure { latestError = "erreur : ${it.message ?: it.javaClass.simpleName}" }
+            loadingLatest = false
+        }
+    }
+
+    LaunchedEffect(Unit) { if (latest == null) loadLatest() }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
@@ -455,31 +494,38 @@ fun ExplorerScreen() {
                 )
                 Button(
                     enabled = !loading && query.isNotBlank(),
-                    onClick = {
-                        scope.launch {
-                            loading = true
-                            result = null
-                            status = "recherche…"
-                            runCatching {
-                                val client = ExplorerClient()
-                                val hash = client.resolveBlockHash(query)
-                                status = "lecture des transactions…"
-                                client.scanOpReturns(hash)
-                            }.onSuccess { res ->
-                                result = res
-                                status = "${res.hits.size} OP_RETURN sur ${res.scannedTx} " +
-                                    "transaction(s) examinée(s)"
-                            }.onFailure {
-                                status = "erreur : ${it.message ?: it.javaClass.simpleName}"
-                            }
-                            loading = false
-                        }
-                    },
+                    onClick = { runSearch(query) },
                     modifier = Modifier.fillMaxWidth()
                 ) { Text(if (loading) "Recherche…" else "Chercher") }
                 if (loading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 if (status.isNotEmpty()) Text(status, style = MaterialTheme.typography.bodySmall)
             }
+        }
+
+        Card {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Derniers blocs", style = MaterialTheme.typography.titleMedium)
+                    OutlinedButton(enabled = !loadingLatest, onClick = { loadLatest() }) {
+                        Text("Rafraîchir")
+                    }
+                }
+                if (loadingLatest) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                if (latestError.isNotEmpty()) {
+                    Text(latestError, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+
+        latest?.forEach { block ->
+            RecentBlockCard(block, onReadOpReturn = {
+                query = block.height.toString()
+                runSearch(query)
+            })
         }
 
         result?.let { res ->
@@ -543,6 +589,28 @@ private fun OpReturnCard(hit: OpReturnHit) {
                 style = MaterialTheme.typography.bodySmall,
                 fontFamily = FontFamily.Monospace
             )
+        }
+    }
+}
+
+@Composable
+private fun RecentBlockCard(block: RecentBlock, onReadOpReturn: () -> Unit) {
+    val shortHash = if (block.id.length >= 20) "${block.id.take(10)}…${block.id.takeLast(10)}" else block.id
+    val ageSec = System.currentTimeMillis() / 1000 - block.timestampSec
+    Card {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text("Bloc ${block.height}", style = MaterialTheme.typography.titleSmall)
+            Text(shortHash, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+            Text(
+                "${Format.ago(ageSec)} · ${Format.time(block.timestampSec * 1000)}",
+                style = MaterialTheme.typography.bodySmall
+            )
+            Text(
+                "${block.txCount} transactions · ${Format.size(block.sizeBytes)}",
+                style = MaterialTheme.typography.bodySmall
+            )
+            Text("nonce ${block.nonce}", style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+            OutlinedButton(onClick = onReadOpReturn) { Text("Lire les OP_RETURN") }
         }
     }
 }

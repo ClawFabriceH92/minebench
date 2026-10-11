@@ -7,10 +7,11 @@ Application Android qui réunit trois usages autour du Bitcoin :
   batterie, statut thermique et l'espérance économique (part du réseau, revenu par jour, temps pour 1 €).
 - **Minage** : client Stratum (subscribe, authorize, notify, set_difficulty, submit) qui mine pour de vrai
   sur un pool, avec limiteurs de charge et garde-fous thermiques.
-- **Explorateur** : recherche un bloc par hauteur ou par hash et lit les sorties OP_RETURN de ses
-  transactions (messages et données inscrits dans la blockchain), rendues en hexadécimal et en texte.
-  Lecture seule via l'API Esplora de mempool.space ; l'analyse est bornée aux premières transactions
-  du bloc pour rester rapide.
+- **Explorateur** : liste les **derniers blocs** de la chaîne (hauteur, horodatage, nombre de
+  transactions, taille, nonce) et recherche un bloc par hauteur ou par hash pour lire les sorties
+  OP_RETURN de ses transactions (messages et données inscrits dans la blockchain), rendues en
+  hexadécimal et en texte. Lecture seule via l'API Esplora de mempool.space ; l'analyse OP_RETURN est
+  bornée aux premières transactions du bloc pour rester rapide.
 
 ## Version
 
