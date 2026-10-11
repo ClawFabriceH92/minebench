@@ -48,3 +48,15 @@ apprendre, et éventuellement tenter la loterie du minage solo.
 
 APK signé, publié en release GitHub. Google Play interdit les applications de minage : distribution
 en APK direct uniquement.
+
+- Dernière version (page) : https://github.com/ClawFabriceH92/minebench/releases/latest
+- APK direct : https://github.com/ClawFabriceH92/minebench/releases/download/latest/minebench-v1.0.1.apk
+
+## Mise à jour automatique
+
+Au lancement, l'application interroge l'API GitHub Releases, compare la version publiée à la version
+installée (`BuildConfig.VERSION_NAME`) et, si une version plus récente existe, affiche une bannière
+proposant de télécharger l'APK. L'onglet **Infos** permet aussi une vérification manuelle et donne
+accès aux releases. L'installation de l'APK reste manuelle (à confirmer sur l'appareil, hors Play
+Store). Pour que la détection fonctionne, chaque release doit porter une version supérieure
+(`versionName`) à la précédente.

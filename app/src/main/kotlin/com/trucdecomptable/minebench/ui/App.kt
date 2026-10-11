@@ -51,11 +51,14 @@ import com.trucdecomptable.minebench.core.PalierMeasure
 import com.trucdecomptable.minebench.core.PalierSpec
 import com.trucdecomptable.minebench.core.Sensors
 import com.trucdecomptable.minebench.core.ThermalStatus
+import com.trucdecomptable.minebench.core.VersionCompare
 import com.trucdecomptable.minebench.net.BlockOpReturns
 import com.trucdecomptable.minebench.net.BtcNetwork
 import com.trucdecomptable.minebench.net.ExplorerClient
 import com.trucdecomptable.minebench.net.OpReturnHit
 import com.trucdecomptable.minebench.net.RecentBlock
+import com.trucdecomptable.minebench.net.ReleaseInfo
+import com.trucdecomptable.minebench.net.UpdateClient
 import com.trucdecomptable.minebench.service.MiningConfig
 import com.trucdecomptable.minebench.service.MiningService
 import com.trucdecomptable.minebench.service.MiningState
@@ -67,6 +70,36 @@ import java.util.Locale
 @Composable
 fun MineBenchApp(sensors: Sensors) {
     var tab by remember { mutableIntStateOf(0) }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var update by remember { mutableStateOf<ReleaseInfo?>(null) }
+    var checkingUpdate by remember { mutableStateOf(false) }
+    var updateStatus by remember { mutableStateOf("") }
+    var bannerDismissed by remember { mutableStateOf(false) }
+
+    fun checkUpdate() {
+        if (checkingUpdate) return
+        scope.launch {
+            checkingUpdate = true
+            updateStatus = "vérification…"
+            runCatching { UpdateClient.fetchLatest() }
+                .onSuccess {
+                    update = it
+                    updateStatus = if (VersionCompare.isNewer(it.version, BuildConfig.VERSION_NAME)) {
+                        "Mise à jour disponible : v${it.version}"
+                    } else {
+                        "À jour (v${BuildConfig.VERSION_NAME})"
+                    }
+                }
+                .onFailure {
+                    updateStatus = "vérification impossible : ${it.message ?: it.javaClass.simpleName}"
+                }
+            checkingUpdate = false
+        }
+    }
+
+    LaunchedEffect(Unit) { checkUpdate() }
+
     Scaffold(
         bottomBar = {
             NavigationBar {
@@ -97,12 +130,54 @@ fun MineBenchApp(sensors: Sensors) {
             }
         }
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
-            when (tab) {
-                0 -> BenchmarkScreen(sensors)
-                1 -> MiningScreen()
-                2 -> ExplorerScreen()
-                else -> InfoScreen()
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            val u = update
+            if (u != null && !bannerDismissed && VersionCompare.isNewer(u.version, BuildConfig.VERSION_NAME)) {
+                UpdateBanner(
+                    info = u,
+                    onDownload = { openUrl(context, u.apkUrl) },
+                    onDismiss = { bannerDismissed = true }
+                )
+            }
+            Box(Modifier.fillMaxSize()) {
+                when (tab) {
+                    0 -> BenchmarkScreen(sensors)
+                    1 -> MiningScreen()
+                    2 -> ExplorerScreen()
+                    else -> InfoScreen(
+                        update = update,
+                        checking = checkingUpdate,
+                        status = updateStatus,
+                        onCheck = { checkUpdate() },
+                        onOpenUrl = { openUrl(context, it) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Ouvre une URL dans le navigateur (téléchargement de l'APK, page des releases). */
+private fun openUrl(context: android.content.Context, url: String) {
+    runCatching {
+        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
+    }
+}
+
+@Composable
+private fun UpdateBanner(info: ReleaseInfo, onDownload: () -> Unit, onDismiss: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Mise à jour disponible : v${info.version}", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "Version installée : v${BuildConfig.VERSION_NAME}",
+                style = MaterialTheme.typography.bodySmall
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onDownload) { Text("Télécharger l'APK") }
+                OutlinedButton(onClick = onDismiss) { Text("Plus tard") }
             }
         }
     }
@@ -618,7 +693,13 @@ private fun RecentBlockCard(block: RecentBlock, onReadOpReturn: () -> Unit) {
 // --------------------------------------------------------------------- Infos
 
 @Composable
-fun InfoScreen() {
+fun InfoScreen(
+    update: ReleaseInfo?,
+    checking: Boolean,
+    status: String,
+    onCheck: () -> Unit,
+    onOpenUrl: (String) -> Unit
+) {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -646,6 +727,40 @@ fun InfoScreen() {
                 Text(
                     "Attention : chauffer un téléphone en continu dégrade la batterie. Google Play interdit " +
                         "les applications de minage, cette application se distribue en APK direct.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+
+        Card {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Mises à jour", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Version installée : v${BuildConfig.VERSION_NAME}",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Button(
+                    enabled = !checking,
+                    onClick = onCheck,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text(if (checking) "Vérification…" else "Vérifier les mises à jour") }
+                if (checking) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                if (status.isNotEmpty()) Text(status, style = MaterialTheme.typography.bodySmall)
+                update?.let { info ->
+                    if (VersionCompare.isNewer(info.version, BuildConfig.VERSION_NAME)) {
+                        Button(
+                            onClick = { onOpenUrl(info.apkUrl) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Télécharger la v${info.version}") }
+                    }
+                    OutlinedButton(
+                        onClick = { onOpenUrl(info.releaseUrl) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Voir les releases GitHub") }
+                }
+                Text(
+                    "Distribution hors Play Store : l'app vérifie les releases GitHub et propose le " +
+                        "téléchargement de l'APK (installation manuelle à confirmer sur l'appareil).",
                     style = MaterialTheme.typography.bodySmall
                 )
             }
