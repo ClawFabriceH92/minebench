@@ -51,7 +51,14 @@ import com.trucdecomptable.minebench.core.PalierMeasure
 import com.trucdecomptable.minebench.core.PalierSpec
 import com.trucdecomptable.minebench.core.Sensors
 import com.trucdecomptable.minebench.core.ThermalStatus
+import com.trucdecomptable.minebench.core.VersionCompare
+import com.trucdecomptable.minebench.net.BlockOpReturns
 import com.trucdecomptable.minebench.net.BtcNetwork
+import com.trucdecomptable.minebench.net.ExplorerClient
+import com.trucdecomptable.minebench.net.OpReturnHit
+import com.trucdecomptable.minebench.net.RecentBlock
+import com.trucdecomptable.minebench.net.ReleaseInfo
+import com.trucdecomptable.minebench.net.UpdateClient
 import com.trucdecomptable.minebench.service.MiningConfig
 import com.trucdecomptable.minebench.service.MiningService
 import com.trucdecomptable.minebench.service.MiningState
@@ -63,6 +70,36 @@ import java.util.Locale
 @Composable
 fun MineBenchApp(sensors: Sensors) {
     var tab by remember { mutableIntStateOf(0) }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var update by remember { mutableStateOf<ReleaseInfo?>(null) }
+    var checkingUpdate by remember { mutableStateOf(false) }
+    var updateStatus by remember { mutableStateOf("") }
+    var bannerDismissed by remember { mutableStateOf(false) }
+
+    fun checkUpdate() {
+        if (checkingUpdate) return
+        scope.launch {
+            checkingUpdate = true
+            updateStatus = "vérification…"
+            runCatching { UpdateClient.fetchLatest() }
+                .onSuccess {
+                    update = it
+                    updateStatus = if (VersionCompare.isNewer(it.version, BuildConfig.VERSION_NAME)) {
+                        "Mise à jour disponible : v${it.version}"
+                    } else {
+                        "À jour (v${BuildConfig.VERSION_NAME})"
+                    }
+                }
+                .onFailure {
+                    updateStatus = "vérification impossible : ${it.message ?: it.javaClass.simpleName}"
+                }
+            checkingUpdate = false
+        }
+    }
+
+    LaunchedEffect(Unit) { checkUpdate() }
+
     Scaffold(
         bottomBar = {
             NavigationBar {
@@ -81,17 +118,66 @@ fun MineBenchApp(sensors: Sensors) {
                 NavigationBarItem(
                     selected = tab == 2,
                     onClick = { tab = 2 },
+                    icon = { Text("E") },
+                    label = { Text("Explorateur") }
+                )
+                NavigationBarItem(
+                    selected = tab == 3,
+                    onClick = { tab = 3 },
                     icon = { Text("i") },
                     label = { Text("Infos") }
                 )
             }
         }
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
-            when (tab) {
-                0 -> BenchmarkScreen(sensors)
-                1 -> MiningScreen()
-                else -> InfoScreen()
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            val u = update
+            if (u != null && !bannerDismissed && VersionCompare.isNewer(u.version, BuildConfig.VERSION_NAME)) {
+                UpdateBanner(
+                    info = u,
+                    onDownload = { openUrl(context, u.apkUrl) },
+                    onDismiss = { bannerDismissed = true }
+                )
+            }
+            Box(Modifier.fillMaxSize()) {
+                when (tab) {
+                    0 -> BenchmarkScreen(sensors)
+                    1 -> MiningScreen()
+                    2 -> ExplorerScreen()
+                    else -> InfoScreen(
+                        update = update,
+                        checking = checkingUpdate,
+                        status = updateStatus,
+                        onCheck = { checkUpdate() },
+                        onOpenUrl = { openUrl(context, it) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Ouvre une URL dans le navigateur (téléchargement de l'APK, page des releases). */
+private fun openUrl(context: android.content.Context, url: String) {
+    runCatching {
+        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
+    }
+}
+
+@Composable
+private fun UpdateBanner(info: ReleaseInfo, onDownload: () -> Unit, onDismiss: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Mise à jour disponible : v${info.version}", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "Version installée : v${BuildConfig.VERSION_NAME}",
+                style = MaterialTheme.typography.bodySmall
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onDownload) { Text("Télécharger l'APK") }
+                OutlinedButton(onClick = onDismiss) { Text("Plus tard") }
             }
         }
     }
@@ -416,10 +502,204 @@ fun MiningScreen() {
     }
 }
 
+// -------------------------------------------------------------- Explorateur
+
+@Composable
+fun ExplorerScreen() {
+    val scope = rememberCoroutineScope()
+    var query by remember { mutableStateOf("") }
+    var loading by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf("") }
+    var result by remember { mutableStateOf<BlockOpReturns?>(null) }
+    var latest by remember { mutableStateOf<List<RecentBlock>?>(null) }
+    var loadingLatest by remember { mutableStateOf(false) }
+    var latestError by remember { mutableStateOf("") }
+
+    fun runSearch(q: String) {
+        if (q.isBlank() || loading) return
+        scope.launch {
+            loading = true
+            result = null
+            status = "recherche…"
+            runCatching {
+                val client = ExplorerClient()
+                val hash = client.resolveBlockHash(q)
+                status = "lecture des transactions…"
+                client.scanOpReturns(hash)
+            }.onSuccess { res ->
+                result = res
+                status = "${res.hits.size} OP_RETURN sur ${res.scannedTx} transaction(s) examinée(s)"
+            }.onFailure {
+                status = "erreur : ${it.message ?: it.javaClass.simpleName}"
+            }
+            loading = false
+        }
+    }
+
+    fun loadLatest() {
+        if (loadingLatest) return
+        scope.launch {
+            loadingLatest = true
+            latestError = ""
+            runCatching { ExplorerClient().fetchLatestBlocks() }
+                .onSuccess { latest = it }
+                .onFailure { latestError = "erreur : ${it.message ?: it.javaClass.simpleName}" }
+            loadingLatest = false
+        }
+    }
+
+    LaunchedEffect(Unit) { if (latest == null) loadLatest() }
+
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Card {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Explorateur de bloc", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Recherche un bloc par hauteur (ex. 966856) ou par hash, puis lit les messages " +
+                        "OP_RETURN inscrits dans ses transactions. Lecture seule, via mempool.space.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                OutlinedTextField(
+                    query, { query = it },
+                    label = { Text("Hauteur ou hash de bloc") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                Button(
+                    enabled = !loading && query.isNotBlank(),
+                    onClick = { runSearch(query) },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text(if (loading) "Recherche…" else "Chercher") }
+                if (loading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                if (status.isNotEmpty()) Text(status, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+
+        Card {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Derniers blocs", style = MaterialTheme.typography.titleMedium)
+                    OutlinedButton(enabled = !loadingLatest, onClick = { loadLatest() }) {
+                        Text("Rafraîchir")
+                    }
+                }
+                if (loadingLatest) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                if (latestError.isNotEmpty()) {
+                    Text(latestError, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+
+        latest?.forEach { block ->
+            RecentBlockCard(block, onReadOpReturn = {
+                query = block.height.toString()
+                runSearch(query)
+            })
+        }
+
+        result?.let { res ->
+            Card {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text("Bloc ${res.block.height}", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        res.block.id,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    if (res.block.timestampSec > 0) {
+                        Text(
+                            "Horodatage : ${Format.time(res.block.timestampSec * 1000)}",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    Text(
+                        "Transactions : ${res.scannedTx} examinée(s) sur ${res.block.txCount}",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    if (res.block.txCount > res.scannedTx) {
+                        Text(
+                            "Analyse limitée aux ${res.scannedTx} premières transactions du bloc.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            }
+
+            if (res.hits.isEmpty()) {
+                Text(
+                    "Aucune sortie OP_RETURN dans les transactions examinées.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            } else {
+                Text("OP_RETURN trouvés (${res.hits.size})", style = MaterialTheme.typography.titleMedium)
+                res.hits.forEach { hit -> OpReturnCard(hit) }
+            }
+        }
+
+        Text(
+            "OP_RETURN sert à inscrire de petites données (messages, horodatages, marqueurs de " +
+                "protocole) dans une sortie de transaction non dépensable.",
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+}
+
+@Composable
+private fun OpReturnCard(hit: OpReturnHit) {
+    Card {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(
+                "tx ${hit.txid.take(16)}… · sortie #${hit.voutIndex} · ${hit.data.dataSize()} octets",
+                style = MaterialTheme.typography.titleSmall
+            )
+            Text("Texte : ${hit.data.text()}", style = MaterialTheme.typography.bodySmall)
+            Text(
+                "Hex : ${hit.data.hex()}",
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace
+            )
+        }
+    }
+}
+
+@Composable
+private fun RecentBlockCard(block: RecentBlock, onReadOpReturn: () -> Unit) {
+    val shortHash = if (block.id.length >= 20) "${block.id.take(10)}…${block.id.takeLast(10)}" else block.id
+    val ageSec = System.currentTimeMillis() / 1000 - block.timestampSec
+    Card {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text("Bloc ${block.height}", style = MaterialTheme.typography.titleSmall)
+            Text(shortHash, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+            Text(
+                "${Format.ago(ageSec)} · ${Format.time(block.timestampSec * 1000)}",
+                style = MaterialTheme.typography.bodySmall
+            )
+            Text(
+                "${block.txCount} transactions · ${Format.size(block.sizeBytes)}",
+                style = MaterialTheme.typography.bodySmall
+            )
+            Text("nonce ${block.nonce}", style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+            OutlinedButton(onClick = onReadOpReturn) { Text("Lire les OP_RETURN") }
+        }
+    }
+}
+
 // --------------------------------------------------------------------- Infos
 
 @Composable
-fun InfoScreen() {
+fun InfoScreen(
+    update: ReleaseInfo?,
+    checking: Boolean,
+    status: String,
+    onCheck: () -> Unit,
+    onOpenUrl: (String) -> Unit
+) {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -428,8 +708,9 @@ fun InfoScreen() {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("MineBench ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Deux usages : mesurer le débit SHA-256d réel de l'appareil (mode benchmark), " +
-                        "et miner pour de vrai sur un pool Stratum avec limitation de charge (mode minage)."
+                    "Trois usages : mesurer le débit SHA-256d réel de l'appareil (benchmark), " +
+                        "miner pour de vrai sur un pool Stratum avec limitation de charge (minage), " +
+                        "et lire les OP_RETURN d'un bloc de la blockchain (explorateur, lecture seule)."
                 )
                 Text(
                     "Aucune rentabilité : un téléphone produit de l'ordre de 0,000001 € par jour au cours " +
@@ -446,6 +727,40 @@ fun InfoScreen() {
                 Text(
                     "Attention : chauffer un téléphone en continu dégrade la batterie. Google Play interdit " +
                         "les applications de minage, cette application se distribue en APK direct.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+
+        Card {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Mises à jour", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Version installée : v${BuildConfig.VERSION_NAME}",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Button(
+                    enabled = !checking,
+                    onClick = onCheck,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text(if (checking) "Vérification…" else "Vérifier les mises à jour") }
+                if (checking) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                if (status.isNotEmpty()) Text(status, style = MaterialTheme.typography.bodySmall)
+                update?.let { info ->
+                    if (VersionCompare.isNewer(info.version, BuildConfig.VERSION_NAME)) {
+                        Button(
+                            onClick = { onOpenUrl(info.apkUrl) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Télécharger la v${info.version}") }
+                    }
+                    OutlinedButton(
+                        onClick = { onOpenUrl(info.releaseUrl) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Voir les releases GitHub") }
+                }
+                Text(
+                    "Distribution hors Play Store : l'app vérifie les releases GitHub et propose le " +
+                        "téléchargement de l'APK (installation manuelle à confirmer sur l'appareil).",
                     style = MaterialTheme.typography.bodySmall
                 )
             }

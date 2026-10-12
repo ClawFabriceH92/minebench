@@ -1,16 +1,21 @@
 # MineBench
 
-Application Android qui réunit deux usages autour du minage Bitcoin :
+Application Android qui réunit trois usages autour du Bitcoin :
 
 - **Benchmark** : mesure le débit SHA-256d réel de l'appareil selon le moteur (MessageDigest natif ou
   Kotlin pur), le nombre de threads et la charge CPU visée (duty cycle). Affiche aussi température
   batterie, statut thermique et l'espérance économique (part du réseau, revenu par jour, temps pour 1 €).
 - **Minage** : client Stratum (subscribe, authorize, notify, set_difficulty, submit) qui mine pour de vrai
   sur un pool, avec limiteurs de charge et garde-fous thermiques.
+- **Explorateur** : liste les **derniers blocs** de la chaîne (hauteur, horodatage, nombre de
+  transactions, taille, nonce) et recherche un bloc par hauteur ou par hash pour lire les sorties
+  OP_RETURN de ses transactions (messages et données inscrits dans la blockchain), rendues en
+  hexadécimal et en texte. Lecture seule via l'API Esplora de mempool.space ; l'analyse OP_RETURN est
+  bornée aux premières transactions du bloc pour rester rapide.
 
 ## Version
 
-1.0.0 (versionCode 1)
+1.1.0 (versionCode 3)
 
 ## Limitation CPU
 
@@ -35,9 +40,23 @@ apprendre, et éventuellement tenter la loterie du minage solo.
 - reconstruction de l'en-tête du bloc 966856 : le hash recalculé est identique à l'identifiant réseau ;
 - conversion des prevhash entre format RPC et format Stratum (aller-retour) ;
 - assemblage complet d'un en-tête de 80 octets avec des fixtures calculées hors application (Python) ;
-- conversion nBits vers cible et cohérence de la difficulté.
+- conversion nBits vers cible et cohérence de la difficulté ;
+- décodage OP_RETURN (push direct, PUSHDATA1, pushes multiples, script non-OP_RETURN, push tronqué,
+  rendu texte des octets non imprimables), sur fixtures validées hors application.
 
 ## Distribution
 
 APK signé, publié en release GitHub. Google Play interdit les applications de minage : distribution
 en APK direct uniquement.
+
+- Dernière version (page) : https://github.com/ClawFabriceH92/minebench/releases/latest
+- APK direct : https://github.com/ClawFabriceH92/minebench/releases/download/latest/minebench-v1.1.0.apk
+
+## Mise à jour automatique
+
+Au lancement, l'application interroge l'API GitHub Releases, compare la version publiée à la version
+installée (`BuildConfig.VERSION_NAME`) et, si une version plus récente existe, affiche une bannière
+proposant de télécharger l'APK. L'onglet **Infos** permet aussi une vérification manuelle et donne
+accès aux releases. L'installation de l'APK reste manuelle (à confirmer sur l'appareil, hors Play
+Store). Pour que la détection fonctionne, chaque release doit porter une version supérieure
+(`versionName`) à la précédente.
