@@ -15,7 +15,7 @@ Application Android qui réunit trois usages autour du Bitcoin :
 
 ## Version
 
-1.1.0 (versionCode 3)
+1.1.1 (versionCode 4)
 
 ## Limitation CPU
 
@@ -50,7 +50,7 @@ APK signé, publié en release GitHub. Google Play interdit les applications de 
 en APK direct uniquement.
 
 - Dernière version (page) : https://github.com/ClawFabriceH92/minebench/releases/latest
-- APK direct : https://github.com/ClawFabriceH92/minebench/releases/download/latest/minebench-v1.1.0.apk
+- APK direct : https://github.com/ClawFabriceH92/minebench/releases/download/latest/minebench-v1.1.1.apk
 
 ## Mise à jour automatique
 
