@@ -700,6 +700,17 @@ fun InfoScreen(
     onCheck: () -> Unit,
     onOpenUrl: (String) -> Unit
 ) {
+    var net by remember { mutableStateOf<NetInfo?>(null) }
+    var topBlock by remember { mutableStateOf<RecentBlock?>(null) }
+    var netLoading by remember { mutableStateOf(true) }
+
+    LaunchedEffect(Unit) {
+        netLoading = true
+        net = runCatching { BtcNetwork.fetch() }.getOrNull()
+        topBlock = runCatching { ExplorerClient().fetchLatestBlocks().firstOrNull() }.getOrNull()
+        netLoading = false
+    }
+
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -729,6 +740,77 @@ fun InfoScreen(
                         "les applications de minage, cette application se distribue en APK direct.",
                     style = MaterialTheme.typography.bodySmall
                 )
+            }
+        }
+
+        Card {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Réseau Bitcoin (en direct)", style = MaterialTheme.typography.titleMedium)
+                if (netLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                val n = net
+                if (n != null) {
+                    Text("Hashrate réseau : ${Format.hashrate(n.networkHashrate)}", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "Difficulté : ${String.format(Locale.FRANCE, "%.3e", n.difficulty)}",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Text("Prix BTC : ${Format.eur(n.btcPriceEur)}", style = MaterialTheme.typography.bodySmall)
+                    Text("Source : ${n.origin}", style = MaterialTheme.typography.bodySmall)
+                } else if (!netLoading) {
+                    Text("Indisponible (hors ligne).", style = MaterialTheme.typography.bodySmall)
+                }
+                topBlock?.let { b ->
+                    Text(
+                        "Dernier bloc : #${b.height} (${Format.ago(System.currentTimeMillis() / 1000 - b.timestampSec)})",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        }
+
+        Card {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Appareil", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Modèle : ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    "Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    "Cœurs CPU : ${Runtime.getRuntime().availableProcessors()}",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    "ABIs : ${android.os.Build.SUPPORTED_ABIS.joinToString(", ")}",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+
+        Card {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Application", style = MaterialTheme.typography.titleMedium)
+                Text("Paquet : ${BuildConfig.APPLICATION_ID}", style = MaterialTheme.typography.bodySmall)
+                Text(
+                    "Version : ${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE})",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    "Connexions réseau : mempool.space et CoinGecko (infos réseau), api.github.com " +
+                        "(mises à jour), et le pool Stratum que vous configurez.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                OutlinedButton(
+                    onClick = { onOpenUrl("https://github.com/ClawFabriceH92/minebench") },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Dépôt GitHub") }
+                OutlinedButton(
+                    onClick = { onOpenUrl("https://github.com/ClawFabriceH92/minebench/releases/latest") },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Releases / APK") }
             }
         }
 
